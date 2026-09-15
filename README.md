@@ -15,8 +15,10 @@ A high-performance, register-level CAN (Controller Area Network) telemetry engin
 
 ---
 
+
 ## Architectural Overview
 
+```text
 stm32-can-telemetry-engine/
 ├── App/                         # Application Layer
 │   ├── telemetry.h              # Telemetry payload definitions & API
@@ -27,8 +29,7 @@ stm32-can-telemetry-engine/
 │   └── can_driver.h             # Peripheral registers & CAN frame structures
 └── Src/                         # System Entry Point
     └── main.c                   # Super-loop scheduler & ISR entry point
-
----
+```
 
 ## CAN Bit Timing & Clock Calculations
 
