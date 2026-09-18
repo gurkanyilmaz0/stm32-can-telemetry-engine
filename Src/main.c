@@ -6,19 +6,58 @@
 
 #define GPIOA_BASE      (0x40020000UL)
 #define GPIOA_MODER     (*(volatile uint32_t *)(GPIOA_BASE + 0x00UL))
-#define GPIOA_AFRH      (*(volatile uint32_t *)(GPIOA_BASE + 0x24UL))
+#define GPIOA_ODR       (*(volatile uint32_t *)(GPIOA_BASE + 0x14UL))
+#define GPIOA_AFRL      (*(volatile uint32_t *)(GPIOA_BASE + 0x20UL))
 
+#define SPI1_BASE       (0x40013000UL)
+#define SPI1_CR1        (*(volatile uint32_t *)(SPI1_BASE + 0x00UL))
+#define SPI1_SR         (*(volatile uint32_t *)(SPI1_BASE + 0x08UL))
+#define SPI1_DR         (*(volatile uint32_t *)(SPI1_BASE + 0x0CUL))
+
+// ADC1 Register Tanımları
 #define ADC1_BASE       (0x40012000UL)
-#define ADC_SR          (*(volatile uint32_t *)(ADC1_BASE + 0x00UL))
-#define ADC_CR2         (*(volatile uint32_t *)(ADC1_BASE + 0x08UL))
-#define ADC_SQR3        (*(volatile uint32_t *)(ADC1_BASE + 0x34UL))
-#define ADC_CCR         (*(volatile uint32_t *)(0x40012300UL))
+#define ADC1_SR         (*(volatile uint32_t *)(ADC1_BASE + 0x00UL))
+#define ADC1_CR2        (*(volatile uint32_t *)(ADC1_BASE + 0x08UL))
+#define ADC1_SQR3       (*(volatile uint32_t *)(ADC1_BASE + 0x34UL))
+#define ADC1_DR         (*(volatile uint32_t *)(ADC1_BASE + 0x4CUL))
 
-#define USART1_BASE     (0x40011000UL)
-#define USART1_SR       (*(volatile uint32_t *)(USART1_BASE + 0x00UL))
-#define USART1_DR       (*(volatile uint32_t *)(USART1_BASE + 0x04UL))
-#define USART1_BRR      (*(volatile uint32_t *)(USART1_BASE + 0x08UL))
-#define USART1_CR1      (*(volatile uint32_t *)(USART1_BASE + 0x0CUL))
+// MCP2515 Komutları ve Register Adresleri
+#define MCP_RESET       0xC0
+#define MCP_WRITE       0x02
+#define MCP_READ        0x03
+#define MCP_CANSTAT     0x0E
+#define MCP_CANCTRL     0x0F
+#define MCP_CANINTF     0x2C
+
+#define MCP_CNF1        0x2A
+#define MCP_CNF2        0x29
+#define MCP_CNF3        0x28
+
+#define MCP_TXB0SIDH    0x31
+#define MCP_RTS_TX0     0x81
+
+// MCP2515 Çalışma Modları
+#define MCP_MODE_NORMAL     0x00
+#define MCP_MODE_LOOPBACK   0x40
+#define MCP_MODE_CONFIG     0x80
+
+// --- PROFESYONEL TELEMETRİ STRUCT MİMARİSİ ---
+typedef struct __attribute__((packed)) {
+    uint8_t counter;
+    uint8_t temperature;
+    uint8_t potentiometer;
+} Telemetry_Packet_t;
+
+// --- GLOBAL DEĞİŞKENLER ---
+volatile uint8_t debug_val = 0;
+volatile uint8_t raw_spi_test = 0;
+volatile uint8_t packet_counter = 0;
+
+volatile Telemetry_Packet_t tx_packet = {0};
+volatile Telemetry_Packet_t rx_packet = {0};
+
+volatile uint16_t pot_voltage = 0;
+volatile uint8_t lm35_temp_c = 0;
 
 void SystemInit(void) {}
 
@@ -27,104 +66,153 @@ void delay_ms(uint32_t ms) {
     while (count--) __asm__("NOP");
 }
 
-void USART1_SendString(char *str) {
-    while (*str) {
-        while (!(USART1_SR & (1UL << 7))); // TX register boşalmasını bekle
-        USART1_DR = *str++;
-    }
+uint16_t ADC_Read(uint8_t channel) {
+    ADC1_SQR3 = channel;
+    ADC1_CR2 |= (1UL << 30);
+    while (!(ADC1_SR & (1UL << 1)));
+    return (uint16_t)ADC1_DR;
 }
 
-// Basit float değerini string'e çeviren yardımcı fonksiyon (sprintf yükünden kaçınmak için)
-void float_to_str(float val, char *buf) {
-    int int_part = (int)val;
-    int frac_part = (int)((val - int_part) * 100); // virgülden sonra 2 basamak
-    if (frac_part < 0) frac_part = -frac_part;
-
-    // Basit manuel formatlama: Örn. "3.29"
-    int i = 0;
-    // Tam kısım
-    if (int_part == 0) {
-        buf[i++] = '0';
-    } else {
-        int temp = int_part;
-        int digits = 0;
-        while (temp > 0) { digits++; temp /= 10; }
-        temp = int_part;
-        for (int j = digits - 1; j >= 0; j--) {
-            buf[i++] = (temp % 10) + '0';
-            temp /= 10;
-        }
+uint8_t SPI1_TransmitReceive(uint8_t byte) {
+    uint32_t timeout = 0x5000;
+    while (!(SPI1_SR & (1UL << 1))) {
+        if (--timeout == 0) return 0xEE;
     }
-    buf[i++] = '.';
-    // Ondalık kısım
-    buf[i++] = (frac_part / 10) + '0';
-    buf[i++] = (frac_part % 10) + '0';
-    buf[i] = '\0';
+
+    *(volatile uint8_t *)&SPI1_DR = byte;
+
+    timeout = 0x5000;
+    while (!(SPI1_SR & (1UL << 0))) {
+        if (--timeout == 0) return 0xAA;
+    }
+
+    return *(volatile uint8_t *)&SPI1_DR;
 }
 
-uint32_t ADC_Read(uint8_t channel) {
-    ADC_SQR3 = channel;             // Kanalı seç (0: PA0, 1: PA1)
-    ADC_CR2 |= (1UL << 30);         // Yazılımsal çevrimi başlat (SWSTART)
-    while (!(ADC_SR & (1UL << 1))); // Çevrimin bitmesini bekle (EOC)
-    return (*(volatile uint32_t *)(ADC1_BASE + 0x4CUL)); // Veriyi oku (DR)
+void MCP2515_Select(void) { GPIOA_ODR &= ~(1UL << 4); }
+void MCP2515_Deselect(void) { GPIOA_ODR |= (1UL << 4); }
+
+void MCP2515_Reset(void) {
+    MCP2515_Select();
+    SPI1_TransmitReceive(MCP_RESET);
+    MCP2515_Deselect();
+    delay_ms(10);
+}
+
+uint8_t MCP2515_ReadRegister(uint8_t address) {
+    uint8_t data;
+    MCP2515_Select();
+    SPI1_TransmitReceive(MCP_READ);
+    SPI1_TransmitReceive(address);
+    data = SPI1_TransmitReceive(0x00);
+    MCP2515_Deselect();
+    return data;
+}
+
+void MCP2515_WriteRegister(uint8_t address, uint8_t data) {
+    MCP2515_Select();
+    SPI1_TransmitReceive(MCP_WRITE);
+    SPI1_TransmitReceive(address);
+    SPI1_TransmitReceive(data);
+    MCP2515_Deselect();
+}
+
+// CAN Paketi Gönderme Fonksiyonu
+void MCP2515_SendPacket(volatile Telemetry_Packet_t *pkt) {
+    MCP2515_Select();
+    SPI1_TransmitReceive(MCP_WRITE);
+    SPI1_TransmitReceive(MCP_TXB0SIDH);
+
+    SPI1_TransmitReceive(0x03); // ID High
+    SPI1_TransmitReceive(0x60); // ID Low
+    SPI1_TransmitReceive(0x00); // EXID High
+    SPI1_TransmitReceive(0x00); // EXID Low
+    SPI1_TransmitReceive(0x03); // DLC (3 Bayt veri)
+
+    SPI1_TransmitReceive(pkt->counter);
+    SPI1_TransmitReceive(pkt->temperature);
+    SPI1_TransmitReceive(pkt->potentiometer);
+    MCP2515_Deselect();
+
+    // RTS Tetikle
+    MCP2515_Select();
+    SPI1_TransmitReceive(MCP_RTS_TX0);
+    MCP2515_Deselect();
+}
+
+// CAN Paketi Okuma Fonksiyonu (RX Buffer 0 Doğrudan Veri Başlangıcı: 0x92)
+void MCP2515_ReceivePacket(volatile Telemetry_Packet_t *rx_pkt) {
+    MCP2515_Select();
+    SPI1_TransmitReceive(0x92); // Doğrudan RXB0 Veri Alanından Okumaya Başla
+
+    rx_pkt->counter       = SPI1_TransmitReceive(0x00);
+    rx_pkt->temperature   = SPI1_TransmitReceive(0x00);
+    rx_pkt->potentiometer = SPI1_TransmitReceive(0x00);
+
+    MCP2515_Deselect();
 }
 
 int main(void) {
-    // 1. Clock Aktif Etme
-    RCC_AHB1ENR |= (1UL << 0); // GPIOA Clock
-    RCC_APB2ENR |= (1UL << 8); // ADC1 Clock
-    RCC_APB2ENR |= (1UL << 4); // USART1 Clock
+    // 1. Clock Yapılandırması
+    RCC_AHB1ENR |= (1UL << 0);
+    RCC_APB2ENR |= (1UL << 8);
+    RCC_APB2ENR |= (1UL << 12);
 
-    // 2. PA0 ve PA1 Analog Mod (ADC), PA9 Alternatif Fonksiyon (USART1_TX)
-    GPIOA_MODER |= (3UL << (0 * 2)) | (3UL << (1 * 2)); // PA0, PA1 Analog
-    GPIOA_MODER &= ~(3UL << (9 * 2));
-    GPIOA_MODER |=  (2UL << (9 * 2));                   // PA9 AF mode
+    // PA0 ve PA1 Analog Mod
+    GPIOA_MODER |= (3UL << (0 * 2)) | (3UL << (1 * 2));
 
-    GPIOA_AFRH  &= ~(0xFUL << ((9 - 8) * 4));
-    GPIOA_AFRH  |=  (7UL << ((9 - 8) * 4));             // AF7 (USART1)
+    // SPI1 Pinleri (PA4 CS Output, PA5 SCK AF5, PA6 MISO AF5, PA7 MOSI AF5)
+    GPIOA_MODER &= ~((3UL << (4 * 2)) | (3UL << (5 * 2)) | (3UL << (6 * 2)) | (3UL << (7 * 2)));
+    GPIOA_MODER |=  ((1UL << (4 * 2)) | (2UL << (5 * 2)) | (2UL << (6 * 2)) | (2UL << (7 * 2)));
 
-    // 3. ADC Ayarları
-    ADC_CCR = (1UL << 16); // Prescaler PCLK2/4
-    ADC_CR2 |= (1UL << 0); // ADC Aktif (ADON)
+    GPIOA_AFRL &= ~((0xFUL << (5 * 4)) | (0xFUL << (6 * 4)) | (0xFUL << (7 * 4)));
+    GPIOA_AFRL |=  ((5UL << (5 * 4)) | (5UL << (6 * 4)) | (5UL << (7 * 4)));
 
-    // 4. USART1 Ayarları (1200 Baud)
-    USART1_BRR  = 0x3412;
-    USART1_CR1  = (1UL << 3) | (1UL << 13); // TE ve UE aktif
+    // SPI1 Yapılandırması: Master, fPCLK/8, Yazılımsal NSS (SSM=1, SSI=1), SPE=1
+    SPI1_CR1 = (1UL << 2) | (1UL << 3) | (1UL << 6) | (1UL << 9) | (1UL << 8);
 
-    char telemetry_msg[64];
-    char pot_str[16];
-    char temp_str[16];
+    // ADC1 On
+    ADC1_CR2 |= (1UL << 0);
+    delay_ms(10);
+
+    MCP2515_Deselect();
+    delay_ms(50);
+
+    // --- MCP2515 BAŞLANGIÇ VE MOD AYARI ---
+    MCP2515_Reset();
+
+    // 8MHz Kristal için 500 kbps Baudrate Ayarları
+    MCP2515_WriteRegister(MCP_CNF1, 0x00);
+    MCP2515_WriteRegister(MCP_CNF2, 0x90);
+    MCP2515_WriteRegister(MCP_CNF3, 0x02);
+
+    // Loopback Moduna Al
+    MCP2515_WriteRegister(MCP_CANCTRL, MCP_MODE_LOOPBACK);
+
+    raw_spi_test = MCP2515_ReadRegister(MCP_CANSTAT);
 
     while (1) {
-        // ADC Örneklemeleri
-        uint32_t pot_raw = ADC_Read(1);  // PA1 -> Potansiyometre
-        uint32_t lm35_raw = ADC_Read(0); // PA0 -> LM35
+        debug_val = MCP2515_ReadRegister(MCP_CANSTAT);
 
-        // Voltaj ve Sıcaklık Hesaplamaları
-        float pot_voltage = (pot_raw * 3.3f) / 4095.0f;
-        float lm35_temp_c = ((lm35_raw * 3.3f) / 4095.0f) * 100.0f;
+        // ADC Okumaları
+        uint16_t adc_lm35 = ADC_Read(0);
+        lm35_temp_c = (uint8_t)(adc_lm35 * 330 / 4095);
+        pot_voltage = ADC_Read(1);
 
-        float_to_str(pot_voltage, pot_str);
-        float_to_str(lm35_temp_c, temp_str);
+        // Gönderim Paketini Güncelle
+        tx_packet.counter = packet_counter;
+        tx_packet.temperature = lm35_temp_c;
+        tx_packet.potentiometer = (uint8_t)(pot_voltage >> 4);
 
-        // Mesajı oluştur: Örn -> POT:3.29V | TEMP:32.40C\r\n
-        // Manuel string birleştirme
-        int idx = 0;
-        char prefix1[] = "POT:";
-        for(int k=0; prefix1[k]!='\0'; k++) telemetry_msg[idx++] = prefix1[k];
-        for(int k=0; pot_str[k]!='\0'; k++) telemetry_msg[idx++] = pot_str[k];
+        // 1. Paketi CAN Üzerinden Fırlat
+        MCP2515_SendPacket(&tx_packet);
 
-        char prefix2[] = "V | TEMP:";
-        for(int k=0; prefix2[k]!='\0'; k++) telemetry_msg[idx++] = prefix2[k];
-        for(int k=0; temp_str[k]!='\0'; k++) telemetry_msg[idx++] = temp_str[k];
+        delay_ms(10); // Donanımın döngüyü işlemesi için minik bir nefes
 
-        char suffix[] = "C\r\n";
-        for(int k=0; suffix[k]!='\0'; k++) telemetry_msg[idx++] = suffix[k];
-        telemetry_msg[idx] = '\0';
+        // 2. Loopback Üzerinden Geri Dönen Paketi Oku
+        MCP2515_ReceivePacket(&rx_packet);
 
-        // UART üzerinden gönder
-        USART1_SendString(telemetry_msg);
-
-        delay_ms(1000);
+        packet_counter++;
+        delay_ms(500);
     }
 }
