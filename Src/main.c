@@ -15,9 +15,12 @@
 
 #define GPIOB_BASE      (0x40020400UL)
 #define GPIOB_MODER     (*(volatile uint32_t *)(GPIOB_BASE + 0x00UL))
+#define GPIOB_ODR       (*(volatile uint32_t *)(GPIOB_BASE + 0x14UL))
+#define GPIOB_IDR       (*(volatile uint32_t *)(GPIOB_BASE + 0x10UL))
 
 #define GPIOC_BASE      (0x40020800UL)
 #define GPIOC_MODER     (*(volatile uint32_t *)(GPIOC_BASE + 0x00UL))
+#define GPIOC_ODR       (*(volatile uint32_t *)(GPIOC_BASE + 0x14UL))
 #define GPIOC_AFRH      (*(volatile uint32_t *)(GPIOC_BASE + 0x24UL))
 
 #define SYSCFG_BASE     (0x40013800UL)
@@ -70,11 +73,14 @@
 #define MCP_MODE_LOOPBACK   0x40
 #define MCP_MODE_CONFIG     0x80
 
+#define LOG_BUFFER_SIZE 50
+
 typedef struct __attribute__((packed)) {
     uint8_t counter;
     uint8_t temperature;
     uint8_t mcu_temperature;
     uint8_t potentiometer;
+    uint8_t distance;
     uint8_t checksum;
 } Telemetry_Packet_t;
 
@@ -105,10 +111,19 @@ volatile uint8_t gps_line_ready = 0;
 char latest_nmea_sentence[128];
 volatile GPS_Data_t gps_data = {0};
 
+Telemetry_Packet_t telemetry_log_history[LOG_BUFFER_SIZE];
+volatile uint8_t log_head = 0;
+volatile uint8_t log_count = 0;
+
 volatile Telemetry_Packet_t tx_packet = {0};
 
 void delay_ms(uint32_t ms) {
     volatile uint32_t count = ms * 1600;
+    while (count--) __asm__("NOP");
+}
+
+void delay_us(uint32_t us) {
+    volatile uint32_t count = us * 10;
     while (count--) __asm__("NOP");
 }
 
@@ -202,7 +217,7 @@ void MCP2515_Init(void) {
 }
 
 uint8_t Calculate_CRC(volatile Telemetry_Packet_t *pkt) {
-    return (pkt->counter ^ pkt->temperature ^ pkt->mcu_temperature ^ pkt->potentiometer);
+    return (pkt->counter ^ pkt->temperature ^ pkt->mcu_temperature ^ pkt->potentiometer ^ pkt->distance);
 }
 
 void MCP2515_SendPacket(volatile Telemetry_Packet_t *pkt) {
@@ -214,16 +229,48 @@ void MCP2515_SendPacket(volatile Telemetry_Packet_t *pkt) {
     SPI1_TransmitReceive(0x60);
     SPI1_TransmitReceive(0x00);
     SPI1_TransmitReceive(0x00);
-    SPI1_TransmitReceive(0x04);
+    SPI1_TransmitReceive(0x05);
     SPI1_TransmitReceive(pkt->counter);
     SPI1_TransmitReceive(pkt->temperature);
     SPI1_TransmitReceive(pkt->mcu_temperature);
     SPI1_TransmitReceive(pkt->potentiometer);
+    SPI1_TransmitReceive(pkt->distance);
     MCP2515_Deselect();
 
     MCP2515_Select();
     SPI1_TransmitReceive(MCP_RTS_TX0);
     MCP2515_Deselect();
+}
+
+void Log_Packet_To_History(Telemetry_Packet_t *pkt) {
+    telemetry_log_history[log_head] = *pkt;
+    log_head = (log_head + 1) % LOG_BUFFER_SIZE;
+    if (log_count < LOG_BUFFER_SIZE) log_count++;
+}
+
+uint8_t HCSR04_ReadDistance(void) {
+    GPIOB_ODR &= ~(1UL << 6);
+    delay_us(2);
+    GPIOB_ODR |= (1UL << 6);
+    delay_us(10);
+    GPIOB_ODR &= ~(1UL << 6);
+
+    uint32_t timeout = 25000; // ~25ms timeout
+    while (!(GPIOB_IDR & (1UL << 7))) {
+        if (--timeout == 0) return 255; // Timeout olursa maksimum uzaklık döndür
+    }
+
+    uint32_t echo_time = 0;
+    while (GPIOB_IDR & (1UL << 7)) {
+        echo_time++;
+        delay_us(1);
+        if (echo_time > 25000) return 255;
+    }
+
+    // Ses hızı hesabı (yaklaşık 58 us = 1 cm)
+    uint32_t distance = echo_time / 58;
+    if (distance > 255) distance = 255;
+    return (uint8_t)distance;
 }
 
 void EXTI0_IRQHandler(void) {
@@ -254,9 +301,6 @@ void USART3_IRQHandler(void) {
     }
 }
 
-/* FIX: NMEA checksum validation ("*HH" at the end of the sentence).
- * Without this, corrupted/truncated lines were silently parsed and could
- * populate gps_data with garbage. */
 uint8_t NMEA_ChecksumValid(const char *sentence) {
     if (sentence[0] != '$') return 0;
     const char *star = strchr(sentence, '*');
@@ -352,7 +396,7 @@ void Parse_NMEA_GPGSA(char *sentence) {
 }
 
 int main(void) {
-    RCC_AHB1ENR |= (1UL << 0) | (1UL << 1);
+    RCC_AHB1ENR |= (1UL << 0) | (1UL << 1) | (1UL << 2);
     RCC_APB2ENR |= (1UL << 8) | (1UL << 12) | (1UL << 14);
 
     GPIOA_MODER |= (3UL << (0 * 2)) | (3UL << (1 * 2));
@@ -361,7 +405,12 @@ int main(void) {
     GPIOA_AFRL &= ~((0xFUL << (5 * 4)) | (0xFUL << (6 * 4)) | (0xFUL << (7 * 4)));
     GPIOA_AFRL |=  ((5UL << (5 * 4)) | (5UL << (6 * 4)) | (5UL << (7 * 4)));
 
-    GPIOB_MODER &= ~(3UL << (0 * 2));
+    GPIOB_MODER &= ~((3UL << (0 * 2)) | (3UL << (6 * 2)) | (3UL << (7 * 2)) | (3UL << (8 * 2)));
+    GPIOB_MODER |=  ((1UL << (6 * 2)) | (1UL << (8 * 2)));
+
+    GPIOC_MODER &= ~((3UL << (0 * 2)) | (3UL << (1 * 2)));
+    GPIOC_MODER |=  ((1UL << (0 * 2)) | (1UL << (1 * 2)));
+
     SYSCFG_EXTICR1 &= ~(0xFUL << 0);
     SYSCFG_EXTICR1 |=  (0x1UL << 0);
 
@@ -369,26 +418,20 @@ int main(void) {
     EXTI_FTSR |= (1UL << 0);
     NVIC_ISER0 |= (1UL << 6);
 
-    /* FIX: SPI1 prescaler was fPCLK2/4 (~21 MHz on an 84 MHz APB2), well above
-     * the MCP2515's 10 MHz SPI limit and a likely cause of corrupted SPI
-     * transactions / CAN link errors. BR[2:0] = 011 -> /16 (~5.25 MHz),
-     * comfortably inside spec. */
     SPI1_CR1 = (1UL << 2) | (3UL << 3) | (1UL << 6) | (1UL << 9) | (1UL << 8);
     UART2_Init();
     UART3_Init();
 
     delay_ms(1000);
     ADC1_CR2 |= (1UL << 0);
-    ADC1_CCR |= (1UL << 23); // Dahili sicaklik sensoru ve VREFINT aktif
-    /* FIX: SMPR1 sample-time field for channel 18 (internal temp sensor) is
-     * bits [26:24], not [20:18]. The old shift value was configuring the
-     * sample time for channel 16 instead, leaving channel 18 at its
-     * (too-short) reset sample time and effectively fixing MCU temp at 0. */
-    ADC1_SMPR1 |= (7UL << 24); // Kanal 18 icin ornekleme suresi
+    ADC1_CCR |= (1UL << 23);
+    ADC1_SMPR1 |= (7UL << 24);
     delay_ms(10);
     MCP2515_Deselect();
     delay_ms(50);
     MCP2515_Init();
+
+    GPIOC_ODR |= (1UL << 0); // Green LED ON
 
     uint32_t telemetry_timer = 0;
 
@@ -401,9 +444,6 @@ int main(void) {
             sentence_copy[sizeof(sentence_copy) - 1] = '\0';
             __asm__ volatile("cpsie i");
 
-            /* FIX: validate checksum before trusting the sentence. Sentences
-             * without a '*HH' checksum (or a corrupted one) are ignored
-             * instead of being parsed into gps_data. */
             if (strlen(sentence_copy) >= 6 && sentence_copy[0] == '$' &&
                 NMEA_ChecksumValid(sentence_copy)) {
                 if (memcmp(sentence_copy + 3, "RMC", 3) == 0) Parse_NMEA_GPRMC(sentence_copy);
@@ -421,17 +461,30 @@ int main(void) {
             uint16_t adc_lm35 = ADC_Read(0);
             uint8_t lm35_temp = (uint8_t)(adc_lm35 * 330 / 4095);
 
-            // Dahili Sicaklik Sensoru (Channel 18) Okuma Formulu (STM32F4)
             uint16_t adc_mcu_raw = ADC_Read(18);
             float sense_voltage = (float)adc_mcu_raw * 3.3f / 4095.0f;
             uint8_t mcu_temp = (uint8_t)(((sense_voltage - 0.76f) / 0.0025f) + 25.0f);
 
             uint16_t pot_val = ADC_Read(1);
+            uint8_t distance_cm = HCSR04_ReadDistance();
+
+            // Alarm Logic: Sıcaklık > 35°C VEYA Mesafe < 30 cm olduğunda alarm ver
+            if (lm35_temp > 35 || mcu_temp > 35 || (distance_cm > 0 && distance_cm < 30)) {
+                GPIOC_ODR |= (1UL << 1);  // Red LED ON
+                GPIOB_ODR |= (1UL << 8);  // Buzzer ON
+            } else {
+                GPIOC_ODR &= ~(1UL << 1); // Red LED OFF
+                GPIOB_ODR &= ~(1UL << 8); // Buzzer OFF
+            }
 
             tx_packet.counter = packet_counter;
             tx_packet.temperature = lm35_temp;
             tx_packet.mcu_temperature = mcu_temp;
             tx_packet.potentiometer = (uint8_t)(pot_val >> 4);
+            tx_packet.distance = distance_cm;
+
+            Log_Packet_To_History((Telemetry_Packet_t*)&tx_packet);
+
             MCP2515_SendPacket(&tx_packet);
             packet_counter++;
 
@@ -451,9 +504,9 @@ int main(void) {
                 sprintf(lon_str, "%d.%06d", lon_int, lon_frac);
             }
 
-            char bridge_msg[220];
-            sprintf(bridge_msg, "RX-> C:%d | T:%d | MCU_T:%d | P:%d | Lat:%s | Lon:%s | Spd:%s | Cog:%s | Time:%s | Hdop:%s | Alt:%s | Mode:%s | Sat:%d\n",
-                    tx_packet.counter, tx_packet.temperature, tx_packet.mcu_temperature, tx_packet.potentiometer,
+            char bridge_msg[240];
+            sprintf(bridge_msg, "RX-> C:%d | T:%d | MCU_T:%d | P:%d | Dist:%d | Lat:%s | Lon:%s | Spd:%s | Cog:%s | Time:%s | Hdop:%s | Alt:%s | Mode:%s | Sat:%d\n",
+                    tx_packet.counter, tx_packet.temperature, tx_packet.mcu_temperature, tx_packet.potentiometer, tx_packet.distance,
                     lat_str, lon_str,
                     strlen(gps_data.speed_knots) > 0 ? gps_data.speed_knots : "0.0",
                     strlen(gps_data.course) > 0 ? gps_data.course : "0.0",
