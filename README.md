@@ -1,81 +1,32 @@
-# STM32 Bare-Metal CAN & Wireless Telemetry Engine 🚀
+# STM32F407 Bare-Metal Telemetry & CAN Engine 🚀
 
-A high-performance, register-level embedded telemetry engine implemented on an ARM Cortex-M4 (STM32F407VG) microcontroller. Built entirely without HAL (Hardware Abstraction Layer) or third-party middleware, this project integrates direct register manipulation for CAN communication, multi-channel ADC sensor acquisition (including internal MCU core temperature via ADC Channel 18), EXTI interrupts, UART GPS parsing with NMEA checksum validation, and a real-time wireless Ground Control Station (GCS) gateway via an ESP8266 (Lolin) node featuring browser-based reverse geocoding, link quality packet-loss metrics, mission uptime stopwatch, peak value tracking, and direct CSV log export.
-
----
-
-## 🚀 Key Features
-
-* **Pure Bare-Metal Architecture:** Zero HAL dependencies. Direct memory-mapped register manipulation for RCC, GPIO (MODER, AFRL), SPI1, ADC1, USART2, USART3, and EXTI.
-* **Optimized MCP2515 CAN Integration:** Hardware-verified SPI communication configuring an external MCP2515 CAN controller with customized clock prescalers in loopback mode with custom filter bypass.
-* **Multi-Channel & Internal ADC Acquisition:** Sequential sampling of analog sensors (LM35 Centigrade Temperature Sensor on PA0, Potentiometer on PA1) alongside the STM32 internal core temperature sensor (ADC Channel 18 with calibrated sample times).
-* **Robust NMEA GPS Parser Engine:** Hardware UART3 ingestion of raw GPS data ($GPRMC$ / $GPGGA$ / $GSA$ sentences) protected by custom NMEA checksum validation, directly extracting latitude, longitude, UTC time, altitude, fix mode (2D/3D), and satellite counts.
-* **Deterministic Packed Telemetry Framing:** Memory-aligned telemetry frames (`__attribute__((packed))`) containing rolling counter, sensor data, internal MCU temperature, and a custom XOR-based checksum (CRC).
-* **Interrupt-Driven Reception:** External interrupt (`EXTI0` on `PB0`) triggered instantly upon packet arrival from the MCP2515 `INT` pin, alongside UART3 RXNE receive interrupts.
-* **Advanced Tactical Wireless GCS Dashboard:** Real-time data bridging via UART2 to an ESP8266 (Lolin) acting as a Wi-Fi Access Point, rendering a professional dark-themed web dashboard equipped with live bar/gauge metrics, link quality packet-loss calculation, mission uptime stopwatch, peak (max) value tracking, threshold warning banners, dynamic OpenStreetMap reverse geocoding, and a one-click CSV flight log exporter.
+Register-level (HAL-free) telemetry system on an STM32F407VG (ARM Cortex-M4). The MCU reads onboard/external sensors, parses live GPS data over UART, frames the data into a CAN packet via an MCP2515 controller, and bridges the same telemetry wirelessly to a browser-based ground station dashboard through an ESP8266 access point.
 
 ---
 
-## 📌 Hardware Pinout & Connections
+## ✅ Completed Features
 
-| Component | Pin / Channel | Connected To | Description |
-| :--- | :--- | :--- | :--- |
-| **MCP2515 CS** | Chip Select | STM32 **PA4** (Output) | SPI1 Slave Select line |
-| **SPI1 SCK** | Clock | STM32 **PA5** (AF5) | SPI Serial Clock |
-| **SPI1 MISO** | Master In / Slave Out | STM32 **PA6** (AF5) | SPI Data Reception |
-| **SPI1 MOSI** | Master Out / In | STM32 **PA7** (AF5) | SPI Data Transmission |
-| **MCP2515 INT** | Interrupt | STM32 **PB0** (EXTI0) | Falling-edge packet arrival interrupt |
-| **GPS Module** | TX -> RX | STM32 **PC10** (USART3_TX) / **PC11** (USART3_RX) | NMEA Telemetry Stream (9600 Baud) |
-| **UART2 TX** | Transmit | ESP8266 (Lolin) **RX** | Wireless GCS bridge data stream (115200 Baud) |
-| **LM35 Sensor** | Signal (Pin 2) | STM32 **PA0** (ADC1_IN0) | Analog temperature input |
-| **Potentiometer** | Wiper (Pin 2) | STM32 **PA1** (ADC1_IN1) | Analog throttle/voltage input |
-| **Common Ground** | STM32 **GND** | MCP2515, Lolin, GPS & Sensors| Mandatory common reference rail |
-| **Power Distribution**| STM32 **3V3** | Breadboard (+) Rail | Regulated logic & sensor supply |
-
----
-
-## 📊 Telemetry Frame Structure (`Telemetry_Packet_t`)
-The system packs real-time sensor data into an efficient structure transmitted over the CAN bus, while concurrent string bridges format GPS coordinates and internal telemetry for the GCS:
-
-- Byte 0: `counter` (`uint8_t`) -> Rolling packet counter (0 to 255)
-- Byte 1: `temperature` (`uint8_t`) -> LM35 converted external temperature (°C)
-- Byte 2: `mcu_temperature` (`uint8_t`) -> STM32 internal core temperature (°C)
-- Byte 3: `potentiometer` (`uint8_t`) -> Scaled potentiometer / throttle input
-- Byte 4: `checksum` (`uint8_t`) -> XOR-based packet integrity validation
-
----
-
-## 🛠️ Environment & Toolchain Setup
-
-* **MCU:** STM32F407VG (ARM Cortex-M4)
-* **CAN Controller:** MCP2515 (8 MHz Crystal)
-* **GPS Module:** NEO-M8N (NMEA protocol via UART3)
-* **Wireless Node:** ESP8266 (Lolin / NodeMCU) running Wi-Fi AP Web Server, Live Metrics UI, and CSV Export
-* **Toolchain:** STM32CubeIDE / GNU ARM Embedded Toolchain (`arm-none-eabi-gcc`)
-* **Hardware Debugger:** ST-Link V2 (SWD) with real-time Live Expressions inspection
-
----
-
-## 🚀 Roadmap / Next Steps
-- [x] Implement interrupt-driven reception using the MCP2515 **INT** pin mapped to STM32 EXTI.
-- [x] Integrate NEO-M8N GPS module with bare-metal UART3 NMEA parsing and checksum protection.
-- [x] Build wireless serial bridge and tactical web-based GCS dashboard featuring link quality, uptime, peak trackers, and CSV logging (ESP8266).
-- [ ] Switch from Loopback Mode to Normal Mode for multi-node physical bus communication.
-- [ ] Integrate buzzer, status LEDs, and advanced flight/drive telemetry metrics.# STM32 Bare-Metal CAN & Wireless Telemetry Engine 🚀
-
-A high-performance, register-level embedded telemetry engine implemented on an ARM Cortex-M4 (STM32F407VG) microcontroller. Built entirely without HAL (Hardware Abstraction Layer) or third-party middleware, this project integrates direct register manipulation for CAN communication, multi-channel ADC sensor acquisition (including internal MCU core temperature via ADC Channel 18), EXTI interrupts, UART GPS parsing with NMEA checksum validation, and a real-time wireless Ground Control Station (GCS) gateway via an ESP8266 (Lolin) node featuring browser-based reverse geocoding, link quality packet-loss metrics, mission uptime stopwatch, peak value tracking, and direct CSV log export.
-
----
-
-## 🚀 Key Features
-
-* **Pure Bare-Metal Architecture:** Zero HAL dependencies. Direct memory-mapped register manipulation for RCC, GPIO (MODER, AFRL), SPI1, ADC1, USART2, USART3, and EXTI.
-* **Optimized MCP2515 CAN Integration:** Hardware-verified SPI communication configuring an external MCP2515 CAN controller with customized clock prescalers in loopback mode with custom filter bypass.
-* **Multi-Channel & Internal ADC Acquisition:** Sequential sampling of analog sensors (LM35 Centigrade Temperature Sensor on PA0, Potentiometer on PA1) alongside the STM32 internal core temperature sensor (ADC Channel 18 with calibrated sample times).
-* **Robust NMEA GPS Parser Engine:** Hardware UART3 ingestion of raw GPS data ($GPRMC$ / $GPGGA$ / $GSA$ sentences) protected by custom NMEA checksum validation, directly extracting latitude, longitude, UTC time, altitude, fix mode (2D/3D), and satellite counts.
-* **Deterministic Packed Telemetry Framing:** Memory-aligned telemetry frames (`__attribute__((packed))`) containing rolling counter, sensor data, internal MCU temperature, and a custom XOR-based checksum (CRC).
-* **Interrupt-Driven Reception:** External interrupt (`EXTI0` on `PB0`) triggered instantly upon packet arrival from the MCP2515 `INT` pin, alongside UART3 RXNE receive interrupts.
-* **Advanced Tactical Wireless GCS Dashboard:** Real-time data bridging via UART2 to an ESP8266 (Lolin) acting as a Wi-Fi Access Point, rendering a professional dark-themed web dashboard equipped with live bar/gauge metrics, link quality packet-loss calculation, mission uptime stopwatch, peak (max) value tracking, threshold warning banners, dynamic OpenStreetMap reverse geocoding, and a one-click CSV flight log exporter.
+| Feature | Status | Notes |
+|---|---|---|
+| Bare-metal peripheral init (RCC, GPIO, AFRL/AFRH) | ✅ Done | No HAL/CMSIS, direct register access |
+| SPI1 master driver | ✅ Done | Polling-based, timeout-guarded |
+| MCP2515 CAN controller driver | ✅ Done | Reset, config, register R/W, TX via `RTS` |
+| CAN loopback self-test | ✅ Done | Verified TX path in `MODE_LOOPBACK` |
+| EXTI interrupt from MCP2515 INT pin | ✅ Done | Reads `EFLG` register on falling edge |
+| Multi-channel ADC sampling | ✅ Done | LM35 (PA0), potentiometer (PA1), internal core temp (Ch18) |
+| HC-SR04 ultrasonic distance sensor | ✅ Done | Trigger/echo timing with timeout guard |
+| UART3 interrupt-driven GPS reception | ✅ Done | RXNE ISR, line-buffered |
+| NMEA sentence parsing (GPRMC/GPGGA/GSA) | ✅ Done | Manual field tokenizing, no external lib |
+| NMEA checksum validation | ✅ Done | XOR checksum against `*hh` field |
+| Packed telemetry struct + XOR checksum | ✅ Done | `__attribute__((packed))`, 6-byte frame |
+| Local telemetry history buffer | ✅ Done | 50-entry circular buffer in RAM |
+| UART2 bridge to ESP8266 | ✅ Done | Formatted ASCII string, 115200 baud |
+| Threshold-based alarm (LED + buzzer) | ✅ Done | Temp > 35°C or distance < 30cm |
+| ESP8266 Wi-Fi AP + web dashboard | ✅ Done | Self-hosted, no external CDN dependency |
+| Live canvas-based telemetry graph | ✅ Done | Pure JS, no external chart library |
+| Packet-loss / link quality estimation | ✅ Done | Rolling counter gap detection |
+| CSV flight log export (client-side) | ✅ Done | Browser `Blob` download |
+| OTA firmware update (ESP8266 side) | ✅ Done | `ArduinoOTA` |
 
 ---
 
@@ -88,40 +39,41 @@ A high-performance, register-level embedded telemetry engine implemented on an A
 | **SPI1 MISO** | Master In / Slave Out | STM32 **PA6** (AF5) | SPI Data Reception |
 | **SPI1 MOSI** | Master Out / In | STM32 **PA7** (AF5) | SPI Data Transmission |
 | **MCP2515 INT** | Interrupt | STM32 **PB0** (EXTI0) | Falling-edge packet arrival interrupt |
-| **GPS Module** | TX -> RX | STM32 **PC10** (USART3_TX) / **PC11** (USART3_RX) | NMEA Telemetry Stream (9600 Baud) |
-| **UART2 TX** | Transmit | ESP8266 (Lolin) **RX** | Wireless GCS bridge data stream (115200 Baud) |
-| **LM35 Sensor** | Signal (Pin 2) | STM32 **PA0** (ADC1_IN0) | Analog temperature input |
-| **Potentiometer** | Wiper (Pin 2) | STM32 **PA1** (ADC1_IN1) | Analog throttle/voltage input |
-| **Common Ground** | STM32 **GND** | MCP2515, Lolin, GPS & Sensors| Mandatory common reference rail |
-| **Power Distribution**| STM32 **3V3** | Breadboard (+) Rail | Regulated logic & sensor supply |
+| **GPS Module** | TX → RX | STM32 **PC10** (USART3_TX) / **PC11** (USART3_RX) | NMEA stream, 9600 baud |
+| **UART2 TX** | Transmit | ESP8266 (Lolin) **RX** | Wireless bridge, 115200 baud |
+| **LM35 Sensor** | Signal (Pin 2) | STM32 **PA0** (ADC1_IN0) | Analog external temperature |
+| **Potentiometer** | Wiper (Pin 2) | STM32 **PA1** (ADC1_IN1) | Analog throttle/reference input |
+| **HC-SR04 Trig** | Trigger | STM32 **PB6** (Output) | Ultrasonic pulse trigger |
+| **HC-SR04 Echo** | Echo | STM32 **PB7** (Input) | Ultrasonic echo timing |
+| **Status LED (Green)** | Output | STM32 **PC0** | System running indicator |
+| **Status LED (Red)** | Output | STM32 **PC1** | Alarm indicator |
+| **Buzzer** | Output | STM32 **PB8** | Alarm audio output |
+| **Common Ground** | GND | MCP2515, ESP8266, GPS, sensors | Shared reference rail |
+| **Power Distribution** | 3V3 | Breadboard (+) rail | Regulated logic/sensor supply |
 
 ---
 
 ## 📊 Telemetry Frame Structure (`Telemetry_Packet_t`)
-The system packs real-time sensor data into an efficient structure transmitted over the CAN bus, while concurrent string bridges format GPS coordinates and internal telemetry for the GCS:
 
-- Byte 0: `counter` (`uint8_t`) -> Rolling packet counter (0 to 255)
-- Byte 1: `temperature` (`uint8_t`) -> LM35 converted external temperature (°C)
-- Byte 2: `mcu_temperature` (`uint8_t`) -> STM32 internal core temperature (°C)
-- Byte 3: `potentiometer` (`uint8_t`) -> Scaled potentiometer / throttle input
-- Byte 4: `checksum` (`uint8_t`) -> XOR-based packet integrity validation
-
----
-
-## 🛠️ Environment & Toolchain Setup
-
-* **MCU:** STM32F407VG (ARM Cortex-M4)
-* **CAN Controller:** MCP2515 (8 MHz Crystal)
-* **GPS Module:** NEO-M8N (NMEA protocol via UART3)
-* **Wireless Node:** ESP8266 (Lolin / NodeMCU) running Wi-Fi AP Web Server, Live Metrics UI, and CSV Export
-* **Toolchain:** STM32CubeIDE / GNU ARM Embedded Toolchain (`arm-none-eabi-gcc`)
-* **Hardware Debugger:** ST-Link V2 (SWD) with real-time Live Expressions inspection
+| Byte | Field | Type | Description |
+|---|---|---|---|
+| 0 | `counter` | `uint8_t` | Rolling packet counter (0–255) |
+| 1 | `temperature` | `uint8_t` | LM35 external temperature (°C) |
+| 2 | `mcu_temperature` | `uint8_t` | STM32 internal core temperature (°C) |
+| 3 | `potentiometer` | `uint8_t` | Scaled potentiometer reading |
+| 4 | `distance` | `uint8_t` | HC-SR04 distance (cm) |
+| 5 | `checksum` | `uint8_t` | XOR of bytes 0–4 |
 
 ---
 
-## 🚀 Roadmap / Next Steps
-- [x] Implement interrupt-driven reception using the MCP2515 **INT** pin mapped to STM32 EXTI.
-- [x] Integrate NEO-M8N GPS module with bare-metal UART3 NMEA parsing and checksum protection.
-- [x] Build wireless serial bridge and tactical web-based GCS dashboard featuring link quality, uptime, peak trackers, and CSV logging (ESP8266).
-- [ ] Switch from Loopback Mode to Normal Mode for multi-node physical bus communication.
-- [ ] Integrate buzzer, status LEDs, and advanced flight/drive telemetry metrics.
+## 🛠️ Environment & Toolchain
+
+| Component | Detail |
+|---|---|
+| MCU | STM32F407VG (ARM Cortex-M4) |
+| CAN Controller | MCP2515 (8 MHz crystal) |
+| GPS Module | NEO-M8N (NMEA, UART) |
+| Wireless Node | ESP8266 (Lolin/NodeMCU) |
+| Toolchain | STM32CubeIDE / `arm-none-eabi-gcc` |
+| Debugger | ST-Link V2 (SWD) |
+| Dashboard Frontend | Vanilla HTML/CSS/JS, canvas-based charting (no CDN) |
