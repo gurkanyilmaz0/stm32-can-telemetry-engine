@@ -1,6 +1,6 @@
 # STM32F407 Bare-Metal Telemetry & CAN Engine 🚀
 
-for one individual Register-level (HAL-free) telemetry system on an STM32F407VG (ARM Cortex-M4). The MCU reads onboard/external sensors, parses live GPS data over UART, frames the data into a CAN packet via an MCP2515 controller, and bridges the same telemetry wirelessly to a browser-based ground station dashboard through an ESP8266 access point.
+for one individual one Register-level (HAL-free) telemetry system on an STM32F407VG (ARM Cortex-M4). The MCU reads onboard/external sensors, parses live GPS data over UART, frames the data into a CAN packet via an MCP2515 controller, and bridges the same telemetry wirelessly to a browser-based ground station dashboard through an ESP8266 access point.
 
 ---
 
